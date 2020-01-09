@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from itertools import product
 
 '''
 The entry points to the protofuzz module.
@@ -109,15 +110,37 @@ def descriptor_to_generator(cls_descriptor, cls, limit=0):
     'Convert a protobuf descriptor to a protofuzz generator for same type'
 
     generators = []
-    for descriptor in cls_descriptor.fields_by_name.values():
-        generator = _prototype_to_generator(descriptor, cls)
+    oneof_fields = []
+    oneof_gens = []
 
+    if cls_descriptor.oneofs:
+        oneof_fields = [f.name for f in cls_descriptor.oneofs[0].fields]
+        # Only handles a single oneof
+        for oneof in cls_descriptor.oneofs[0].fields:
+            oneof_gens.append(_prototype_to_generator(oneof, cls))
+            # oneof_gens.append(descriptor_to_generator(oneof.message_type, cls, 0))
+
+    for descriptor in cls_descriptor.fields_by_name.values():
+        if descriptor.name in oneof_fields:
+            continue
+                
+        generator = _prototype_to_generator(descriptor, cls)
+        
         if limit != 0:
             generator.set_limit(limit)
 
         generators.append(generator)
 
-    obj = cls(cls_descriptor.name, *generators)
+    if oneof_gens and generators:
+        all_gens = [cls(cls_descriptor.name, *p) for p in product(generators, oneof_gens)]
+    elif oneof_gens:
+        all_gens = list(oneof_gens)
+    elif generators:
+        all_gens = list(generators)
+    else:
+        raise Exception('No generators!')
+
+    obj = cls(cls_descriptor.name, *all_gens)
     return obj
 
 
@@ -142,7 +165,6 @@ def _fields_to_object(descriptor, fields):
     'Helper to convert a descriptor and a set of fields to a Protobuf instance'
     # pylint: disable=protected-access
     obj = descriptor._concrete_class()
-
     for name, value in fields:
         if isinstance(value, tuple):
             subtype = descriptor.fields_by_name[name].message_type
@@ -170,7 +192,7 @@ class ProtobufGenerator(object):
         self._dependencies = []
 
     def _iteration_helper(self, iter_class, limit):
-        generator = descriptor_to_generator(self._descriptor, iter_class)
+        generators = descriptor_to_generator(self._descriptor, iter_class)
 
         if limit:
             generator.set_limit(limit)
@@ -178,9 +200,10 @@ class ProtobufGenerator(object):
         # Create dependencies before beginning generation
         for args in self._dependencies:
             generator.make_dependent(*args)
-
-        for fields in generator:
-            yield _fields_to_object(self._descriptor, fields)
+        
+        for generator in generators:
+            for _, fields in generator:
+                yield _fields_to_object(self._descriptor, fields)
 
     def add_dependency(self, source, target, action):
         '''

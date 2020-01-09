@@ -88,7 +88,13 @@ class Permuter(ValueGenerator):
 
     def __init__(self, name, *generators, limit=float('inf')):
         super().__init__(name, limit)
-        self._generators = list(generators)
+        # Flatten nest generators
+        self._generators = []
+        for gen in list(generators):
+            if type(gen) == 'tuple':
+                self._generators += gen
+            else:
+                self._generators.append(gen)
         self._update_independent_generators()
 
     @staticmethod
